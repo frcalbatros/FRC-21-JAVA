@@ -17,6 +17,8 @@ import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.GenericHID.Hand;
 import edu.wpi.first.wpilibj.drive.MecanumDrive;
+import edu.wpi.first.wpilibj.ADXRS450_Gyro;
+import edu.wpi.first.wpilibj.SPI;
 
 /**
  * The VM is configured to automatically run this class, and to call the
@@ -41,8 +43,17 @@ public class Robot extends TimedRobot {
   private static final int mJoystickChannel = 1; //driving joystick
   private static final int rJoystickChannel = 0; //Mission controller
 
+  // gyro variables do not change
+  private static final double kAngleSetpoint = 0.0;
+	private static final double kP = 0.005; // propotional turning constant
+  private static final SPI.Port kGyroPort = SPI.Port.kOnboardCS0;
+
+  // Buttons
   private static final int fwd_button = 1; // joystick buton to lock y axis
   private static final int ltr_button = 2; // joystick buton to lock x axis
+  private static final int gyro_button = 3; // assign button ID
+  private static final int inc_button = 6;
+  private static final int dec_button = 4;
 
   
   private Timer m_timer; 
@@ -62,6 +73,7 @@ public class Robot extends TimedRobot {
   private double x_coef;
   private double y_coef;
   private double t_coef;
+  private double ag_coef;
   
 
   
@@ -76,7 +88,9 @@ public class Robot extends TimedRobot {
     PWMVictorSPX frontLeft = new PWMVictorSPX(mFrontLeftChannel);
     PWMVictorSPX rearLeft = new PWMVictorSPX(mRearLeftChannel);
     PWMVictorSPX frontRight = new PWMVictorSPX(mFrontRightChannel);
-    PWMVictorSPX rearRight = new PWMVictorSPX(mRearRightChannel);  
+    PWMVictorSPX rearRight = new PWMVictorSPX(mRearRightChannel);
+
+    ADXRS450_Gyro m_gyro = new ADXRS450_Gyro(kGyroPort);
 
     //mecanum drive object
     m_robotDrive = new MecanumDrive(frontLeft, rearLeft, frontRight, rearRight);
@@ -94,6 +108,7 @@ public class Robot extends TimedRobot {
    
     m_timer = new Timer();
 
+
     // Invert the left side motors.
     // You may need to change or remove this to match your robot.
     //frontLeft.setInverted(true);
@@ -103,6 +118,9 @@ public class Robot extends TimedRobot {
     r_rShooter.setInverted(true);
 
     //System.out.println("hello");
+
+    // calibrate gyro
+    m_gyro.calibrate();
  
   }
 
@@ -156,29 +174,82 @@ public class Robot extends TimedRobot {
   public void teleopPeriodic() {
 
     boolean forward = m_stick.getRawButton(fwd_button);
-    boolean lateral = m_stick.getRawButton(ltr_button); 
+    boolean lateral = m_stick.getRawButton(ltr_button);
+    boolean gyro_btn = m_stick.getRawButton(gyro_button);
+    boolean inc = m_stick.getRawButton(inc_button);
+    boolean dec = m_stick.getRawButton(dec_button);
+
+    // Gyro
+    double turningValue = (kAngleSetpoint - m_gyro.getAngle()) * kP; // Get angle
+    turningValue = Math.copySign(turningValue, m_joystick.getY()); // Invert the direction of the turn if we are going backwards
 
     x_coef =  .6;
     y_coef = -.6;
     t_coef = .6;
+    ag_coef = .01;
 
     triggers = (-1*r_stick.getTriggerAxis(Hand.kRight))+(r_stick.getTriggerAxis(Hand.kLeft));
 
     
-    
+    // forward button case
     if (forward) {
        m_robotDrive.driveCartesian(0, -1 * m_stick.getY(), 0, 0.0);
-     }  else if (lateral){
+    } 
+    
+    // lateral button case
+    else if (lateral){
        m_robotDrive.driveCartesian(m_stick.getX(), 0, 0, 0.0);
-     } else {
+    }
+
+    // increse agility
+    else if (inc){
+      if (x_coef == 1){System.out.println("x_coef is max");}
+      else if (y_coef == -1){System.out.println("y_coef is max");}
+      else if (t_coef == 1){System.out.println("t_coef is max");}
+      else {
+        x_coef += ag_coef;
+        y_coef -= ag_coef;
+        t_coef += ag_coef;
+        System.out.println("x_coef = "+x_coef+", y_coef = "+y_coef+", t_coef = "+t_coef);
+      }
+    }
+
+    // decrease agility
+    else if (dec){
+      if (x_coef == -1){System.out.println("x_coef is min");}
+      else if (y_coef == 1){System.out.println("y_coef is min");}
+      else if (t_coef == -1){System.out.println("t_coef is min");}
+      else {
+        x_coef -= ag_coef;
+        y_coef += ag_coef;
+        t_coef -= ag_coef;
+        System.out.println("x_coef = "+x_coef+", y_coef = "+y_coef+", t_coef = "+t_coef);
+      }
+    }
+     
+    else {
+
+      // eliminate z axis uncertainty
       if (Math.abs(m_stick.getZ()) > 0.2){
         System.out.println(m_stick.getZ());
-        m_robotDrive.driveCartesian(x_coef*m_stick.getX(), y_coef * m_stick.getY(), t_coef* m_stick.getZ(), 0.0);
-      }  else {
-        m_robotDrive.driveCartesian(x_coef*m_stick.getX(), y_coef * m_stick.getY(), 0.0, 0.0);
+        m_robotDrive.driveCartesian(x_coef*m_stick.getX(), y_coef*m_stick.getY(), t_coef*m_stick.getZ(), 0.0);
       }
       
-     }
+      else {       
+
+        // Gyro Code Starts Here
+        if(gyro_btn){
+          m_robotDrive.driveCartesian(x_coef*m_stick.getX(), y_coef*m_stick.getY(), t_coef*m_stick.getZ(), turningValue);
+        }
+
+        // standard drive
+        else {
+          m_robotDrive.driveCartesian(x_coef*m_stick.getX(), y_coef*m_stick.getY(), t_coef*m_stick.getZ(), 0.0);
+        }
+        
+      }
+      
+    }
   
     r_elevator.set(triggers);
     r_roller.set(r_stick.getY(Hand.kLeft));
@@ -186,14 +257,6 @@ public class Robot extends TimedRobot {
     r_rShooter.set(r_stick.getY(Hand.kRight));
     r_intake.set((r_stick.getAButton()) ? 1 : 0 ); //Short Hand If...Else (Ternary Operator)
    
-   
-    /*
-    if (r_stick.getAButton()) {
-      r_intake.set(1);
-    }
-    else {
-      r_intake.set(0);
-    }*/
   
   }
 
